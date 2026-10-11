@@ -22,9 +22,15 @@ class SaveInfoMember:
 
 
 @dataclass(frozen=True)
+class ItemInfo:
+    stats_name: str  # e.g. WPN_Longsword_1
+    template: str | None  # root template GUID, lowercase
+
+
+@dataclass(frozen=True)
 class Save:
     newage: NewAge
-    item_stats: dict[int, str]
+    items: dict[int, ItemInfo]
     members: tuple[SaveInfoMember, ...]
     difficulty: str
     location: str
@@ -40,7 +46,7 @@ def load_save(save_dir: Path) -> Save:
     info = json.loads(info_path.read_text(encoding="utf-8")) if info_path.is_file() else {}
     return Save(
         newage=newage,
-        item_stats=read_item_stats(root, newage),
+        items=read_items(root, newage),
         members=tuple(
             SaveInfoMember(c.get("Origin", "?"), int(c.get("Experience Points (Total)", -1)))
             for c in info.get("Active Party", {}).get("Characters", [])
@@ -59,26 +65,33 @@ def region_attribute(root: ET.Element, region_id: str, attribute_id: str) -> str
     raise ValueError(f"Globals.lsx has no {region_id}/{attribute_id} attribute")
 
 
-def read_item_stats(root: ET.Element, newage: NewAge) -> dict[int, str]:
-    """Map entity index -> item stats name (e.g. WPN_Longsword_1).
+def read_items(root: ET.Element, newage: NewAge) -> dict[int, ItemInfo]:
+    """Map entity index -> item stats name and root template.
 
     The Items region lists Creator nodes (entity GUIDs) and Item nodes (stats
-    names) in matching order.
+    names, templates) in matching order. Templates are lowercased so they
+    compare equal to GUIDs read from game data.
     """
-    stats: dict[int, str] = {}
+    items: dict[int, ItemInfo] = {}
     region = next((r for r in root.iter("region") if r.get("id") == "Items"), None)
     if region is None:
-        return stats
+        return items
     creators = [n for n in region.iter("node") if n.get("id") == "Creator"]
-    items = [n for n in region.iter("node") if n.get("id") == "Item"]
-    if len(creators) != len(items):
-        raise ValueError(f"Items region has {len(creators)} Creator nodes but {len(items)} Item nodes")
-    for creator, item in zip(creators, items, strict=True):
-        entity_attr = creator.find("attribute[@id='Entity']")
-        stats_attr = item.find("attribute[@id='Stats']")
-        if entity_attr is None or stats_attr is None or not entity_attr.get("value"):
+    item_nodes = [n for n in region.iter("node") if n.get("id") == "Item"]
+    if len(creators) != len(item_nodes):
+        raise ValueError(f"Items region has {len(creators)} Creator nodes but {len(item_nodes)} Item nodes")
+    for creator, item in zip(creators, item_nodes, strict=True):
+        entity_guid = attribute_value(creator, "Entity")
+        stats_name = attribute_value(item, "Stats")
+        if not entity_guid or stats_name is None:
             continue
-        index = newage.entity_by_guid.get(to_larian_bytes(entity_attr.get("value", "")))
+        index = newage.entity_by_guid.get(to_larian_bytes(entity_guid))
         if index is not None:
-            stats[index] = stats_attr.get("value", "")
-    return stats
+            template = attribute_value(item, "CurrentTemplate")
+            items[index] = ItemInfo(stats_name, template.lower() if template else None)
+    return items
+
+
+def attribute_value(node: ET.Element, attribute_id: str) -> str | None:
+    attr = node.find(f"attribute[@id='{attribute_id}']")
+    return attr.get("value") if attr is not None else None

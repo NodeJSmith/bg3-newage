@@ -7,8 +7,9 @@ import pytest
 from bg3_newage.cli import app
 from bg3_newage.gamedata import load_game_data
 from bg3_newage.guids import to_larian_bytes
-from bg3_newage.save import load_save
+from bg3_newage.save import ItemInfo, load_save
 from tests.builder import BlobBuilder, guid
+from tests.sample_save import CHEST_TEMPLATE, write_game_data_dir
 
 GLOBALS = """<?xml version="1.0" encoding="utf-8"?>
 <save>
@@ -17,7 +18,8 @@ GLOBALS = """<?xml version="1.0" encoding="utf-8"?>
   </node></region>
   <region id="Items"><node id="Items"><children>
     <node id="Creator"><attribute id="Entity" type="guid" value="{item_guid}" /></node>
-    <node id="Item"><attribute id="Stats" type="FixedString" value="WPN_Longsword_1" /></node>
+    <node id="Item"><attribute id="Stats" type="FixedString" value="WPN_Longsword_1" />
+      <attribute id="CurrentTemplate" type="guid" value="{chest_template_upper}" /></node>
   </children></node></region>
 </save>
 """
@@ -28,7 +30,11 @@ def test_load_save_reads_blob_items_and_save_info(tmp_path):
     blob = builder.build()
     item_guid = str(uuid.UUID(int=2))  # entity 1's GUID, as LSX would print it
     assert to_larian_bytes(item_guid) == guid(1)
-    (tmp_path / "Globals.lsx").write_text(GLOBALS.format(blob=base64.b64encode(blob).decode(), item_guid=item_guid))
+    (tmp_path / "Globals.lsx").write_text(
+        GLOBALS.format(
+            blob=base64.b64encode(blob).decode(), item_guid=item_guid, chest_template_upper=CHEST_TEMPLATE.upper()
+        )
+    )
     (tmp_path / "SaveInfo.json").write_text(
         json.dumps(
             {
@@ -41,7 +47,7 @@ def test_load_save_reads_blob_items_and_save_info(tmp_path):
 
     save = load_save(tmp_path)
 
-    assert save.item_stats == {1: "WPN_Longsword_1"}
+    assert save.items == {1: ItemInfo("WPN_Longsword_1", CHEST_TEMPLATE)}
     assert save.members[0].origin == "Shadowheart"
     assert save.members[0].total_xp == 34074
     assert save.location == "SCL_Main_A"
@@ -69,7 +75,7 @@ def test_load_game_data_reads_feats_and_classes(tmp_path):
 
 def test_mismatched_items_region_fails_loudly(tmp_path):
     blob = base64.b64encode(BlobBuilder(entity_count=1).build()).decode()
-    xml = GLOBALS.format(blob=blob, item_guid=str(uuid.UUID(int=1))).replace(
+    xml = GLOBALS.format(blob=blob, item_guid=str(uuid.UUID(int=1)), chest_template_upper=CHEST_TEMPLATE).replace(
         '<node id="Item">', '<node id="Item"><attribute id="Stats" value="X" /></node><node id="Item">'
     )
     (tmp_path / "Globals.lsx").write_text(xml)
@@ -83,3 +89,9 @@ def test_cli_reports_malformed_globals_without_traceback(tmp_path, capsys):
         app(["party", str(tmp_path)], exit_on_error=False)
     assert exit_info.value.code == 1
     assert capsys.readouterr().err.startswith("error: ")
+
+
+def test_load_game_data_reads_camp_chest_templates(tmp_path):
+    game = load_game_data(write_game_data_dir(tmp_path, chest_templates=(CHEST_TEMPLATE.upper(),)))
+
+    assert game.camp_chest_templates == {CHEST_TEMPLATE}

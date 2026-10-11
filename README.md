@@ -42,7 +42,7 @@ You need Python 3.12+ with [uv](https://docs.astral.sh/uv/), and the .NET 8 SDK 
    dotnet $LSL lsf2lsx data/AutoSave_86/Globals.lsf data/AutoSave_86/Globals.lsx
    ```
 
-3. **Optional: get class and feat names.** Extract the game's own `Data/Shared.pak` the same way. Without it, classes and feats show as GUID prefixes.
+3. **Extract the game's own `Data/Shared.pak`** the same way. `party` uses it for class and feat names (without it they show as GUID prefixes), and `camp-chest` needs it to recognise the chest.
 
    ```sh
    dotnet $LSL extract "<game>/Data/Shared.pak" data/shared
@@ -53,6 +53,7 @@ You need Python 3.12+ with [uv](https://docs.astral.sh/uv/), and the .NET 8 SDK 
    ```sh
    uv tool install -e .
    bg3-newage party data/AutoSave_86 --game-data data/shared [--json]
+   bg3-newage camp-chest data/AutoSave_86 --game-data data/shared [--json]   # Traveller's Chest contents
    bg3-newage components data/AutoSave_86 --grep inventory   # explore the blob
    ```
 
@@ -85,6 +86,8 @@ All offsets are relative to the end of the 48-byte LSMF header (`BASE_OFFSET`).
 | `game.inventory.v1.IsOwnedComponent` | 8 | on an inventory entity: entity ref to its owner |
 | `game.v0.PlayerComponent` | 1 | marks the active party |
 
-Item stats names (for example `WPN_Longsword_1`) come from the `Items` region of `Globals.lsx`, whose `Creator`/`Item` nodes pair entity GUIDs with `Stats` in matching order.
+Item stats names (for example `WPN_Longsword_1`) and root templates come from the `Items` region of `Globals.lsx`, whose `Creator`/`Item` nodes pair entity GUIDs with `Stats` and `CurrentTemplate` in matching order.
 
-**Not decoded yet:** bags inside inventories aren't followed. Also undecoded are spell books (`game.spell.*`), passives, feat sub-choices (such as Elemental Adept's element), health, and the unknown bytes listed above. It's also unconfirmed whether `StatsComponent` scores include bonuses from items.
+**Bags and the camp chest.** A bag works like any other container: its inventory's `IsOwnedComponent` references the bag item, so following owners recursively reaches bag contents. The Traveller's Chest is the item whose `CurrentTemplate` is listed in `Public/Shared*/Lists/CampChestTemplates.lsx`. In the save, its stats name is just `OBJ_ImmutableContainer`.
+
+**Not decoded yet:** spell books (`game.spell.*`), passives, feat sub-choices (such as Elemental Adept's element), health, and the unknown bytes listed above. It's also unconfirmed whether `StatsComponent` scores include bonuses from items.

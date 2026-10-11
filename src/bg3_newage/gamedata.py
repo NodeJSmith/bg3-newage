@@ -4,8 +4,9 @@ Class and feat references in the save are bare GUIDs. Their names live in
 ``Shared.pak`` (``Public/Shared*/ClassDescriptions/ClassDescriptions.lsx`` and
 ``Public/Shared*/Feats/Feats.lsx``), which this tool reads from the user's own
 extracted copy rather than shipping. Subclasses are ClassDescriptions entries
-too. Anything added by later patches or living in ``Gustav.pak`` shows as an
-unknown GUID.
+too. ``Public/Shared*/Lists/CampChestTemplates.lsx`` lists the root templates
+of the camp's Traveller's Chest. Anything added by later patches or living in
+``Gustav.pak`` shows as an unknown GUID.
 """
 
 import xml.etree.ElementTree as ET
@@ -22,6 +23,7 @@ UNKNOWN_PREFIX = "unknown:"
 class GameData:
     classes: dict[str, str] = field(default_factory=dict)
     feats: dict[str, str] = field(default_factory=dict)
+    camp_chest_templates: frozenset[str] = frozenset()
 
     def class_name(self, raw: bytes) -> str | None:
         return lookup(self.classes, raw)
@@ -44,6 +46,7 @@ def load_game_data(shared_dir: Path | None) -> GameData:
     return GameData(
         classes=read_name_table(shared_dir.glob("Public/*/ClassDescriptions/ClassDescriptions.lsx")),
         feats=read_name_table(shared_dir.glob("Public/*/Feats/Feats.lsx")),
+        camp_chest_templates=read_camp_chest_templates(shared_dir.glob("Public/*/Lists/CampChestTemplates.lsx")),
     )
 
 
@@ -55,3 +58,20 @@ def read_name_table(paths: Iterable[Path]) -> dict[str, str]:
             if attrs.get("UUID") and attrs.get("Name"):
                 names[attrs["UUID"].lower()] = attrs["Name"]
     return names
+
+
+def read_camp_chest_templates(paths: Iterable[Path]) -> frozenset[str]:
+    """Root template GUIDs of camp chests.
+
+    The file is a list of ``<node id="CampChestTemplate">`` entries, each with a
+    ``TemplateId`` attribute (the chest's root template) and its own ``UUID``.
+    """
+    templates = set()
+    for path in paths:
+        for node in ET.parse(path).getroot().iter("node"):
+            if node.get("id") != "CampChestTemplate":
+                continue
+            attr = node.find("attribute[@id='TemplateId']")
+            if attr is not None and (value := attr.get("value")):
+                templates.add(value.lower())
+    return frozenset(templates)

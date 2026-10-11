@@ -9,37 +9,15 @@ from collections import Counter
 from dataclasses import dataclass
 
 from bg3_newage.gamedata import GameData
-from bg3_newage.lsmf import NewAge, read_u64_field
+from bg3_newage.inventory import Inventories, Item
+from bg3_newage.lsmf import NewAge
 from bg3_newage.save import Save, SaveInfoMember
 
 ABILITIES = ("STR", "DEX", "CON", "INT", "WIS", "CHA")
-EQUIPMENT_SLOTS = (
-    "Helmet",
-    "Body",
-    "Cloak",
-    "Melee main hand",
-    "Melee off hand",
-    "Ranged main hand",
-    "Ranged off hand",
-    "Ring 1",
-    "Underwear",
-    "Boots",
-    "Gloves",
-    "Amulet",
-    "Ring 2",
-    "Wings",
-    "Horns",
-    "Overhead",
-    "Instrument",
-    "Camp body",
-    "Camp shoes",
-)
 # game.stats.v3.StatsComponent: 8 unknown bytes, six i32 ability scores, i32 proficiency bonus
 STATS = struct.Struct("<8x6ii")
 # game.experience.v0.ExperienceComponent: i32 total XP (repeated), 4 unknown bytes
 EXPERIENCE = struct.Struct("<i8x")
-# game.inventory.v0.MemberData: entity ref to the containing inventory, i16 slot, 6 unknown bytes
-MEMBER_DATA = struct.Struct("<Qh6x")
 # game.progression.v3.LevelUpComponent: [start, end) range of u64 pointers, one per character level
 LEVEL_UP_RANGE = struct.Struct("<QQ")
 # game.character_creation.v3.LevelUpComponentData: class, subclass, feat GUIDs (null when not chosen), 48 unknown
@@ -52,13 +30,6 @@ class LevelUp:
     class_name: str | None
     subclass: str | None
     feat: str | None
-
-
-@dataclass(frozen=True)
-class Item:
-    slot: int
-    slot_name: str
-    stats: str
 
 
 @dataclass(frozen=True)
@@ -75,14 +46,14 @@ class PartyMember:
 
 def read_party(save: Save, game: GameData) -> list[PartyMember]:
     blob = save.newage
+    inventories = Inventories.from_save(save)
     stats = blob.by_entity("game.stats.v3.StatsComponent")
     xp = blob.by_entity("game.experience.v0.ExperienceComponent")
-    inventory = read_inventory(blob, save.item_stats)
     members = []
     for entity in sorted(blob.by_entity("game.v0.PlayerComponent")):
         total_xp = EXPERIENCE.unpack(xp[entity])[0] if entity in xp else None
         scores, proficiency = decode_stats(stats.get(entity))
-        equipped, carried = inventory.get(entity, ((), ()))
+        holdings = inventories.holdings(entity)
         members.append(
             PartyMember(
                 entity=entity,
@@ -91,8 +62,8 @@ def read_party(save: Save, game: GameData) -> list[PartyMember]:
                 abilities=scores,
                 proficiency=proficiency,
                 level_ups=read_level_ups(blob, entity, game),
-                equipped=equipped,
-                carried=carried,
+                equipped=holdings.equipped,
+                carried=holdings.carried,
             )
         )
     return members
@@ -129,46 +100,6 @@ def read_level_ups(blob: NewAge, entity: int, game: GameData) -> tuple[LevelUp, 
             LevelUp(level, game.class_name(class_guid), game.class_name(subclass_guid), game.feat_name(feat_guid))
         )
     return tuple(level_ups)
-
-
-def read_inventory(blob: NewAge, item_stats: dict[int, str]) -> dict[int, tuple[tuple[Item, ...], tuple[str, ...]]]:
-    """Group items by character.
-
-    An item is equipped when its WieldingComponent references the character;
-    its MemberData slot is then the equipment slot. Other items count as
-    carried when they sit in an inventory whose IsOwnedComponent references the
-    character. Items inside bags are not followed.
-    """
-    inventory_owner = {
-        inv: blob.resolve_ref(read_u64_field(raw))
-        for inv, raw in blob.by_entity("game.inventory.v1.IsOwnedComponent").items()
-    }
-    wielder = {
-        item: blob.resolve_ref(read_u64_field(raw))
-        for item, raw in blob.by_entity("game.inventory.v0.WieldingComponent").items()
-    }
-    equipped: dict[int, list[Item]] = {}
-    carried: dict[int, list[tuple[int, str]]] = {}
-    for item, raw in blob.by_entity("game.inventory.v0.MemberComponent").items():
-        # MemberComponent holds a pointer to the item's MemberData record, not an entity reference
-        inventory_ref, slot = blob.read_struct(MEMBER_DATA, read_u64_field(raw))
-        name = item_stats.get(item, f"entity {item}")
-        inventory = blob.resolve_ref(inventory_ref)
-        if (owner := wielder.get(item)) is not None:
-            equipped.setdefault(owner, []).append(Item(slot, slot_name(slot), name))
-        elif inventory is not None and (owner := inventory_owner.get(inventory)) is not None:
-            carried.setdefault(owner, []).append((slot, name))
-    return {
-        owner: (
-            tuple(sorted(equipped.get(owner, []), key=lambda i: i.slot)),
-            tuple(name for _, name in sorted(carried.get(owner, []))),
-        )
-        for owner in equipped.keys() | carried.keys()
-    }
-
-
-def slot_name(slot: int) -> str:
-    return EQUIPMENT_SLOTS[slot] if 0 <= slot < len(EQUIPMENT_SLOTS) else f"slot {slot}"
 
 
 def class_summary(member: PartyMember) -> str:

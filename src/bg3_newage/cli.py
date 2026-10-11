@@ -2,15 +2,16 @@ import json
 import sys
 import xml.etree.ElementTree as ET
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, NoReturn
 
 from cyclopts import App, Parameter
 
 from bg3_newage.gamedata import load_game_data
+from bg3_newage.inventory import Inventories
 from bg3_newage.party import PartyMember, class_summary, read_party
 from bg3_newage.save import load_save
 
@@ -40,6 +41,36 @@ def party(
 
 
 @app.command
+def camp_chest(
+    save_dir: Path,
+    *,
+    game_data: Annotated[Path, Parameter(help="Extracted Shared.pak directory; identifies the chest.")],
+    as_json: Annotated[bool, Parameter(name="--json")] = False,
+) -> None:
+    """List everything in the camp's Traveller's Chest, including the contents of bags inside it.
+
+    The chest is recognised by its root template, so this needs the game's CampChestTemplates list.
+    """
+    with exit_on_bad_input():
+        save = load_save(save_dir)
+        game = load_game_data(game_data)
+    if not game.camp_chest_templates:
+        fail(f"no Public/*/Lists/CampChestTemplates.lsx under {game_data}; pass an extracted Shared.pak")
+    inventories = Inventories.from_save(save)
+    chests = inventories.camp_chests(game)
+    if not chests:
+        fail("no item in this save uses a camp chest template")
+    contents = [name for chest in chests for name in inventories.names_held_by(chest)]
+    counted = count_in_order(contents)
+    if as_json:
+        print(json.dumps([{"name": name, "count": n} for name, n in counted], indent=2))
+        return
+    print(f"Traveller's Chest: {len(contents)} item{'' if len(contents) == 1 else 's'}")
+    for name, n in counted:
+        print(f"   {with_count(name, n)}")
+
+
+@app.command
 def components(save_dir: Path, *, grep: str = "") -> None:
     """List every component in the NewAge blob: index, element size, count, and whether it's per-entity."""
     with exit_on_bad_input():
@@ -56,8 +87,21 @@ def exit_on_bad_input() -> Iterator[None]:
     try:
         yield
     except (OSError, ValueError, ET.ParseError) as exc:  # LsmfError is a ValueError
-        print(f"error: {exc}", file=sys.stderr)
-        sys.exit(1)
+        fail(str(exc))
+
+
+def fail(message: str) -> NoReturn:
+    print(f"error: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def count_in_order(names: Iterable[str]) -> list[tuple[str, int]]:
+    """Collapse duplicate names to counts, keeping first-seen (in-game container) order."""
+    return list(Counter(names).items())
+
+
+def with_count(name: str, n: int) -> str:
+    return name if n == 1 else f"{name} x{n}"
 
 
 def format_member(member: PartyMember) -> str:
@@ -73,9 +117,8 @@ def format_member(member: PartyMember) -> str:
             lines.append(f"   L{lu.level} {lu.class_name or '?'}{extra}")
     lines.append(f"   classes: {class_summary(member)}")
     for item in member.equipped:
-        lines.append(f"   [{item.slot_name}] {item.stats}")
+        lines.append(f"   [{item.slot_name}] {item.stats_name}")
     if member.carried:
-        counts = Counter(member.carried)
-        listed = ", ".join(name if n == 1 else f"{name} x{n}" for name, n in counts.items())
+        listed = ", ".join(with_count(name, n) for name, n in count_in_order(member.carried))
         lines.append(f"   carrying {len(member.carried)}: {listed}")
     return "\n".join(lines) + "\n"
