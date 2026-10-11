@@ -28,6 +28,7 @@ EMPTY_RANGE = 0xFFFF_FFFF_FFFF_FFFF  # stored in place of an offset when a range
 U64 = struct.Struct("<Q")
 U32 = struct.Struct("<I")
 I32 = struct.Struct("<i")
+I64 = struct.Struct("<q")
 # A [start, end) pair of offsets, the usual shape of a variable-length field
 RANGE = struct.Struct("<QQ")
 # magic, version, hash, block_offset, block_size, name_block_size, component_count, unknown u16, unknown u64

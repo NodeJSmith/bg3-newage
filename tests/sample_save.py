@@ -12,6 +12,7 @@ from pathlib import Path
 from bg3_newage.gamedata import GameData
 from bg3_newage.guids import from_larian_bytes
 from bg3_newage.inventory import MEMBER_DATA
+from bg3_newage.levelup import LEVEL_UP_RECORD, SELECTOR_KINDS
 from bg3_newage.lsmf import EMPTY_RANGE, ENTITY_ID_COMPONENT, GUID_SIZE, NewAge
 from bg3_newage.osiris import SCRAMBLE_KEY
 from bg3_newage.save import ItemInfo, Save, SaveInfoMember
@@ -115,10 +116,56 @@ def build_blob() -> bytes:
         owners=[PLAYER, COMPANION],
     )
 
-    level1 = BARD + bytes(16) + bytes(16) + bytes(48)
-    level2 = BARD + SWORDS + DUAL_WIELDER + bytes(48)
+    # Point buy: increments over 8 indexed by ability ID, index 0 unused (DEX 15, CHA 15, the rest 8)
+    increments = stored_range(struct.pack("<7i", 0, 0, 7, 0, 0, 0, 7))
+    b.add_component(
+        "game.character_creation.v1.CharacterCreationStatsComponent", 88, [bytes(72) + increments], owners=[PLAYER]
+    )
+
+    # Ability and skill picks point at elements of enum tables holding the game's IDs
+    abilities = b.add_component("game.character_creation.v1.EAbility", 8, [struct.pack("<q", 2), struct.pack("<q", 6)])
+    dex, cha = abilities, abilities + 8
+    performance = b.add_component("game.character_creation.v1.ESkill", 8, [struct.pack("<q", 2)])
+
+    def selector(picks: bytes, extra: bytes = b"") -> int:
+        """A selector record: metadata pointer, list GUID, range of picks, then any kind-specific fields."""
+        return b.add_blob(struct.pack("<Q16x", 0) + stored_range(picks) + extra)
+
+    def names(*values: str) -> bytes:
+        return b"".join(struct.pack("<QI4x", *text(v)) for v in values)
+
+    def selectors(by_kind: dict[str, int]) -> int:
+        """LevelUpComponentSelectors: one range of selector pointers per kind, in SELECTOR_KINDS order."""
+        empty = struct.pack("<QQ", EMPTY_RANGE, EMPTY_RANGE)
+        labels = [label for label, _ in SELECTOR_KINDS]
+        assert set(by_kind) <= set(labels)
+        return b.add_blob(
+            b"".join(stored_range(struct.pack("<Q", by_kind[k])) if k in by_kind else empty for k in labels)
+        )
+
+    level1_choices = selectors(
+        {
+            "racial bonus": selector(struct.pack("<QQ", dex, cha), stored_range(struct.pack("<2i", 2, 1))),
+            "skills": selector(struct.pack("<Q", performance)),
+            "spells": selector(names("Target_ViciousMockery")),
+            "equipment": selector(names("ARM_Instrument_Drum")),
+        }
+    )
+    level2_choices = selectors(
+        {
+            "ability increase": selector(struct.pack("<QQ", dex, dex)),
+            "expertise": selector(struct.pack("<Q", performance)),
+            "passives": selector(names("FightingStyle_TwoWeaponFighting")),
+        }
+    )
+
+    def level_up(class_guid: bytes, subclass: bytes, feat: bytes, choices: int) -> bytes:
+        return LEVEL_UP_RECORD.pack(class_guid, subclass, feat, 0, choices)
+
+    level1 = level_up(BARD, bytes(16), bytes(16), level1_choices)
+    level2 = level_up(BARD, SWORDS, DUAL_WIELDER, level2_choices)
     records = b.add_blob(level1 + level2)
-    pointers = b.add_blob(struct.pack("<QQ", records, records + 96))
+    pointers = b.add_blob(struct.pack("<QQ", records, records + LEVEL_UP_RECORD.size))
     b.add_component(
         "game.progression.v3.LevelUpComponent", 16, [struct.pack("<QQ", pointers, pointers + 16)], owners=[PLAYER]
     )

@@ -5,36 +5,24 @@ this module reads are known; the rest of each record is still unidentified.
 """
 
 import struct
-from collections import Counter
 from dataclasses import dataclass
 
 from bg3_newage.gamedata import GameData
 from bg3_newage.inventory import Inventories, Item
-from bg3_newage.lsmf import I32, RANGE, U64, NewAge
+from bg3_newage.levelup import ABILITIES, LevelUp, read_level_ups, read_point_buy
+from bg3_newage.lsmf import I32, U64, NewAge
 from bg3_newage.save import Save, SaveInfoMember
 from bg3_newage.spells import prepared_spells, tadpole_powers
 
-ABILITIES = ("STR", "DEX", "CON", "INT", "WIS", "CHA")
-# game.stats.v3.StatsComponent: 8 unknown bytes, six i32 ability scores, i32 proficiency bonus
+# game.stats.v3.StatsComponent: 8 unknown bytes, six i32 ability scores (STR..CHA), i32 proficiency bonus
 STATS = struct.Struct("<8x6ii")
 # game.experience.v0.ExperienceComponent: i32 total XP (repeated), 4 unknown bytes
 EXPERIENCE = struct.Struct("<i8x")
-# game.progression.v3.LevelUpComponent is a [start, end) RANGE of u64 pointers, one per character level
-# game.character_creation.v3.LevelUpComponentData: class, subclass, feat GUIDs (null when not chosen), 48 unknown
-LEVEL_UP_RECORD = struct.Struct("<16s16s16s48x")
 # game.stats.v0.HealthComponent: i32 current HP, i32 max HP, 24 unknown bytes
 HEALTH = struct.Struct("<ii24x")
 # game.approval.v0.Ratings: [start, end) of u64 entity refs (whose approval), [start, end) of matching i32 ratings,
 # then a [start, end) range of 16-byte GUIDs, unidentified
 APPROVAL = struct.Struct("<QQQQ16x")
-
-
-@dataclass(frozen=True)
-class LevelUp:
-    level: int
-    class_name: str | None
-    subclass: str | None
-    feat: str | None
 
 
 @dataclass(frozen=True)
@@ -49,6 +37,7 @@ class PartyMember:
     max_hp: int | None
     approval: int | None  # of the player's avatar; None for the avatar itself
     abilities: dict[str, int]
+    point_buy: dict[str, int]  # base scores bought at character creation
     proficiency: int | None
     level_ups: tuple[LevelUp, ...]
     equipped: tuple[Item, ...]
@@ -85,6 +74,7 @@ def read_party(save: Save, game: GameData) -> list[PartyMember]:
                 max_hp=max_hp,
                 approval=approvals.get(entity),
                 abilities=scores,
+                point_buy=read_point_buy(blob, entity),
                 proficiency=proficiency,
                 level_ups=read_level_ups(blob, entity, game),
                 equipped=holdings.equipped,
@@ -138,22 +128,3 @@ def decode_stats(raw: bytes | None) -> tuple[dict[str, int], int | None]:
         return {}, None
     *scores, proficiency = STATS.unpack_from(raw)
     return dict(zip(ABILITIES, scores, strict=True)), proficiency
-
-
-def read_level_ups(blob: NewAge, entity: int, game: GameData) -> tuple[LevelUp, ...]:
-    raw = blob.by_entity("game.progression.v3.LevelUpComponent").get(entity)
-    if raw is None:
-        return ()
-    start, end = RANGE.unpack(raw)
-    level_ups = []
-    for level, (record_offset,) in enumerate(blob.read_range(start, end, U64), start=1):
-        class_guid, subclass_guid, feat_guid = blob.read_struct(LEVEL_UP_RECORD, record_offset)
-        level_ups.append(
-            LevelUp(level, game.class_name(class_guid), game.class_name(subclass_guid), game.feat_name(feat_guid))
-        )
-    return tuple(level_ups)
-
-
-def class_summary(member: PartyMember) -> str:
-    counts = Counter(lu.class_name or "no class" for lu in member.level_ups)
-    return " / ".join(f"{name} {n}" for name, n in counts.items())

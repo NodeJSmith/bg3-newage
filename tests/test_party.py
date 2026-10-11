@@ -4,7 +4,7 @@ from bg3_newage.cli import format_member
 from bg3_newage.gamedata import GameData
 from bg3_newage.guids import from_larian_bytes
 from bg3_newage.lsmf import NewAge
-from bg3_newage.party import LevelUp, PartyMember, read_party
+from bg3_newage.party import PartyMember, read_party
 from bg3_newage.save import Save, SaveInfoMember
 from tests.builder import BlobBuilder
 from tests.sample_save import COMPANION, DUAL_WIELDER, GAME, PLAYER, build_save
@@ -21,10 +21,10 @@ def test_reads_player_build():
     assert member.name == "Tav"
     assert member.abilities == {"STR": 8, "DEX": 15, "CON": 14, "INT": 12, "WIS": 10, "CHA": 18}
     assert member.proficiency == 3
-    assert member.level_ups == (
-        LevelUp(1, "Bard", None, None),
-        LevelUp(2, "Bard", "SwordsCollege", "DualWielder"),
-    )
+    assert [(lu.level, lu.class_name, lu.subclass, lu.feat) for lu in member.level_ups] == [
+        (1, "Bard", None, None),
+        (2, "Bard", "SwordsCollege", "DualWielder"),
+    ]
 
 
 def test_camp_companion_follows_the_party():
@@ -69,6 +69,7 @@ def test_player_without_other_components_still_reported():
         max_hp=None,
         approval=None,
         abilities={},
+        point_buy={},
         proficiency=None,
         level_ups=(),
         equipped=(),
@@ -84,8 +85,11 @@ def test_format_member_text():
     assert format_member(member) == (
         "== Tav  (XP 34359, HP 59/59)\n"
         "   STR 8  DEX 15  CON 14  INT 12  WIS 10  CHA 18  prof +3\n"
-        "   L1 Bard\n"
-        "   L2 Bard  subclass: SwordsCollege  feat: DualWielder\n"
+        "   point buy: STR 8  DEX 15  CON 8  INT 8  WIS 8  CHA 15\n"
+        "   L1 Bard  racial bonus: DEX +2, CHA +1  skills: Performance  spells: Target_ViciousMockery"
+        "  equipment: ARM_Instrument_Drum\n"
+        "   L2 Bard  subclass: SwordsCollege  feat: DualWielder  ability increase: DEX +2"
+        "  expertise: Performance  passives: FightingStyle_TwoWeaponFighting\n"
         "   classes: Bard 2\n"
         "   tadpole powers: TAD_Charm\n"
         "   [Melee main hand] WPN_Longsword_1\n"

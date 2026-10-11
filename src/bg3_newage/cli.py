@@ -14,7 +14,8 @@ from cyclopts import App, Parameter
 from bg3_newage.camp import read_camp
 from bg3_newage.gamedata import GameData, load_game_data
 from bg3_newage.inventory import Inventories
-from bg3_newage.party import PartyMember, class_summary, read_party
+from bg3_newage.levelup import class_summary
+from bg3_newage.party import PartyMember, read_party
 from bg3_newage.save import load_save
 
 app = App(name="bg3-newage", help="Read party builds out of an extracted Baldur's Gate 3 save.")
@@ -171,13 +172,16 @@ def format_member(member: PartyMember) -> str:
     if member.abilities:
         scores = "  ".join(f"{k} {v}" for k, v in member.abilities.items())
         lines.append(f"   {scores}  prof +{member.proficiency}")
+    if member.point_buy:
+        lines.append(f"   point buy: {'  '.join(f'{k} {v}' for k, v in member.point_buy.items())}")
     # Only levels where a choice was made; plain class levels are covered by the classes line
     for lu in member.level_ups:
-        if lu.subclass or lu.feat or lu.level == 1:
-            choices = (("subclass", lu.subclass), ("feat", lu.feat))
-            extra = "".join(f"  {label}: {value}" for label, value in choices if value)
+        if lu.subclass or lu.feat or lu.choices or lu.level == 1:
+            picks = [("subclass", lu.subclass), ("feat", lu.feat)]
+            picks += [(kind, ", ".join(values)) for kind, values in lu.choices.items()]
+            extra = "".join(f"  {label}: {value}" for label, value in picks if value)
             lines.append(f"   L{lu.level} {lu.class_name or '?'}{extra}")
-    lines.append(f"   classes: {class_summary(member)}")
+    lines.append(f"   classes: {class_summary(member.level_ups)}")
     if member.tadpole_powers:
         lines.append(f"   tadpole powers: {', '.join(member.tadpole_powers)}")
     for item in member.equipped:
