@@ -11,7 +11,8 @@ if (args.Length != 3)
     return 1;
 }
 
-var (cmd, src, dest) = (args[0], args[1], args[2]);
+// LSLib also refuses relative paths, so resolve them here
+var (cmd, src, dest) = (args[0], Path.GetFullPath(args[1]), Path.GetFullPath(args[2]));
 
 switch (cmd)
 {
