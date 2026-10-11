@@ -1,0 +1,32 @@
+[project]
+name = "bg3-newage"
+version = "0.1.0"
+description = "Read party builds (ability scores, feats, equipment) out of Baldur's Gate 3 saves by decoding the NewAge component blob"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = ["cyclopts>=4"]
+
+[project.scripts]
+bg3-newage = "bg3_newage.cli:app"
+
+[build-system]
+requires = ["setuptools>=80", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = ["pytest>=8", "pyright>=1.1.400", "ruff>=0.11"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.12"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

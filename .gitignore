@@ -1,0 +1,23 @@
+__pycache__/
+*.egg-info/
+build/
+dist/
+.venv/
+.pytest_cache/
+.ruff_cache/
+tools/lsltool/bin/
+tools/lsltool/obj/
+vendor/
+
+# Saves and extracted game data are personal / Larian's: keep them all under data/
+data/
+*.lsv
+*.lsf
+*.lsfx
+*.lsx
+*.loca
+*.pak
+*.bin
+*.WebP
+*.dll
+SaveInfo.json
