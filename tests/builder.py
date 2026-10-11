@@ -11,12 +11,20 @@ import uuid
 from dataclasses import dataclass
 
 from bg3_newage.guids import to_larian_bytes
-from bg3_newage.lsmf import GUID_SIZE, HEADER, LEVEL_COMPONENT, LEVEL_RECORD, MAGIC, OWNER_MAP_ENTRY, TABLE_ENTRY
+from bg3_newage.lsmf import (
+    EMPTY_RANGE,
+    GUID_SIZE,
+    HEADER,
+    LEVEL_COMPONENT,
+    LEVEL_RECORD,
+    MAGIC,
+    OWNER_MAP_ENTRY,
+    TABLE_ENTRY,
+)
 
 UNKNOWN_HASH = 0
 FORMAT_VERSION = 1
 COMPONENT_VERSION = 0
-EMPTY_OFFSET = 0xFFFF_FFFF_FFFF_FFFF
 
 
 def guid(n: int) -> bytes:
@@ -64,7 +72,7 @@ class BlobBuilder:
         for table_index, spec in enumerate(self.components, start=1):
             if spec.owners is not None:
                 # Real blobs store an all-ones sentinel offset for empty owner maps
-                indices = append(struct.pack(f"<{len(spec.owners)}I", *spec.owners)) if spec.owners else EMPTY_OFFSET
+                indices = append(struct.pack(f"<{len(spec.owners)}I", *spec.owners)) if spec.owners else EMPTY_RANGE
                 owner_maps += OWNER_MAP_ENTRY.pack(
                     indices, indices + 4 * len(spec.owners), table_index, len(spec.owners)
                 )

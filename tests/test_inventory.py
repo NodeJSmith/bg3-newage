@@ -1,12 +1,13 @@
+import base64
 import json
 import struct
 from dataclasses import replace
 
-from bg3_newage.cli import app
 from bg3_newage.inventory import MEMBER_DATA, Inventories, Item
 from bg3_newage.lsmf import ENTITY_ID_COMPONENT, GUID_SIZE, NewAge
 from bg3_newage.save import ItemInfo, Save
 from tests.builder import BlobBuilder
+from tests.cli_runner import run_cli
 from tests.sample_save import (
     CHEST,
     GAME,
@@ -27,7 +28,7 @@ def test_equipped_items_come_from_wielding():
 def test_carried_items_list_bag_contents_right_after_the_bag():
     holdings = Inventories.from_save(build_save()).holdings(PLAYER)
 
-    assert holdings.carried == ("OBJ_Potion_Healing", "OBJ_Bag_AlchemyPouch", "OBJ_Agate")
+    assert holdings.carried == ("OBJ_Potion_Healing", "OBJ_Bag_AlchemyPouch", "OBJ_Agate", "S_MOO_NightsongLetter")
 
 
 def test_camp_chest_found_by_template():
@@ -58,19 +59,9 @@ def test_bag_inside_itself_is_listed_once():
     b.add_component(
         "game.inventory.v1.IsOwnedComponent", 8, [struct.pack("<Q", ids + GUID_SIZE * bag)], owners=[bag_inventory]
     )
-    save = Save(NewAge(b.build()), {bag: ItemInfo("OBJ_Bag", None)}, (), "", "")
+    save = Save(NewAge(b.build()), {bag: ItemInfo("OBJ_Bag", None)}, (), "", "", {})
 
     assert Inventories.from_save(save).names_held_by(bag) == ("OBJ_Bag",)
-
-
-def run_cli(args: list[str], capsys) -> tuple[int, str, str]:
-    try:
-        app(args, exit_on_error=False)
-        code = 0
-    except SystemExit as exc:
-        code = int(exc.code or 0)
-    out = capsys.readouterr()
-    return code, out.out, out.err
 
 
 def test_camp_chest_command_text_and_json(tmp_path, capsys):
@@ -103,3 +94,20 @@ def test_camp_chest_command_explains_no_chest_in_save(tmp_path, capsys):
 
     assert code == 1
     assert "no item in this save uses a camp chest template" in err
+
+
+def test_short_component_element_is_a_one_line_error(tmp_path, capsys):
+    b = BlobBuilder(entity_count=1)
+    b.add_component("game.v0.PlayerComponent", 1, [b"\x01"], owners=[0])
+    b.add_component("game.stats.v0.HealthComponent", 4, [bytes(4)], owners=[0])
+    save_dir = tmp_path / "save"
+    save_dir.mkdir()
+    blob = base64.b64encode(b.build()).decode()
+    (save_dir / "Globals.lsx").write_text(
+        f'<save><region id="NewAge"><node id="NewAge"><attribute id="NewAge" value="{blob}" /></node></region></save>'
+    )
+
+    code, _, err = run_cli(["party", str(save_dir)], capsys)
+
+    assert code == 1
+    assert err.startswith("error: ")

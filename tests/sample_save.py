@@ -1,4 +1,9 @@
-"""A small synthetic save: one Bard, an equipped sword, a potion, a bag with a gem, and a camp chest."""
+"""A small synthetic save.
+
+One Bard in the party with an equipped sword, a potion, and a bag holding a gem
+and a story note; a companion waiting at camp; a camp chest; and party-wide
+camp state.
+"""
 
 import base64
 import struct
@@ -7,13 +12,31 @@ from pathlib import Path
 from bg3_newage.gamedata import GameData
 from bg3_newage.guids import from_larian_bytes
 from bg3_newage.inventory import MEMBER_DATA
-from bg3_newage.lsmf import ENTITY_ID_COMPONENT, GUID_SIZE, NewAge
+from bg3_newage.lsmf import EMPTY_RANGE, ENTITY_ID_COMPONENT, GUID_SIZE, NewAge
+from bg3_newage.osiris import SCRAMBLE_KEY
 from bg3_newage.save import ItemInfo, Save, SaveInfoMember
 from tests.builder import BlobBuilder, guid
 
-ENTITIES = PLAYER, INVENTORY, SWORD, POTION, BAG, BAG_INVENTORY, GEM, CHEST, CHEST_INVENTORY, HELM = range(10)
+ENTITIES = (
+    PLAYER,
+    INVENTORY,
+    SWORD,
+    POTION,
+    BAG,
+    BAG_INVENTORY,
+    GEM,
+    CHEST,
+    CHEST_INVENTORY,
+    HELM,
+    COMPANION,
+    NOTE,
+    PARTY_STATE,
+    CAMP_NPC,
+) = range(14)
 BARD, SWORDS, DUAL_WIELDER = guid(100), guid(101), guid(102)
 CHEST_TEMPLATE = "96eab9d1-74b1-42f7-b1ad-061a9fcea8c4"
+NOTE_TEMPLATE = "06332bc8-19b5-4f9c-9013-6d433abd78a0"
+COMPANION_TEMPLATE = "c774d764-4a17-48dc-b470-32ace9ce447d"
 
 GAME = GameData(
     classes={from_larian_bytes(BARD): "Bard", from_larian_bytes(SWORDS): "SwordsCollege"},
@@ -28,6 +51,7 @@ ITEMS = {
     GEM: ItemInfo("OBJ_Agate", None),
     CHEST: ItemInfo("OBJ_ImmutableContainer", CHEST_TEMPLATE),
     HELM: ItemInfo("ARM_Helmet_1", None),
+    NOTE: ItemInfo("OBJ_Scroll", NOTE_TEMPLATE, "S_MOO_NightsongLetter"),
 }
 
 
@@ -42,12 +66,53 @@ def build_blob() -> bytes:
     def ref(entity: int) -> bytes:
         return struct.pack("<Q", ref_offset(entity))
 
+    def text(value: str) -> tuple[int, int]:
+        """Store a string and return its (pointer, length) view."""
+        return b.add_blob(value.encode()), len(value)
+
+    def stored_range(data: bytes) -> bytes:
+        """Store records and return the [start, end) range pointing at them."""
+        start = b.add_blob(data)
+        return struct.pack("<QQ", start, start + len(data))
+
     b.add_component("game.v0.PlayerComponent", 1, [b"\x01"], owners=[PLAYER])
+    b.add_component("game.avatar.v0.AvatarComponent", 16, [bytes(16)], owners=[PLAYER])
+    # The camp NPC is at camp but was never recruited, so it isn't a companion
+    b.add_component("game.camp.v1.PresenceComponent", 1, [b"\x01"] * 3, owners=[PLAYER, COMPANION, CAMP_NPC])
+    b.add_component("game.recruit.v0.RecruitedByComponent", 8, [ref(PLAYER)], owners=[COMPANION])
+    b.add_component(
+        "game.stats.v0.HealthComponent",
+        32,
+        [struct.pack("<ii24x", 59, 59), struct.pack("<ii24x", 40, 71)],
+        owners=[PLAYER, COMPANION],
+    )
+    approval = (
+        stored_range(ref(PLAYER)) + stored_range(struct.pack("<i", 42)) + struct.pack("<QQ", EMPTY_RANGE, EMPTY_RANGE)
+    )
+    b.add_component("game.approval.v0.Ratings", 48, [approval], owners=[COMPANION])
+    b.add_component(
+        "game.tadpole_tree.v0.PowerContainerComponent",
+        16,
+        [stored_range(struct.pack("<QQ", *text("TAD_Charm")))],
+        owners=[PLAYER],
+    )
+    prepared = b"".join(struct.pack("<QI12x", *text(name)) for name in ("Shout_Dash", "Target_ViciousMockery"))
+    b.add_component("game.spell.v0.SpellBookPrepares", 80, [stored_range(prepared) + bytes(64)], owners=[PLAYER])
+    b.add_component("game.calendar.v0.DaysPassedComponent", 4, [struct.pack("<i", 43)], owners=[PARTY_STATE])
+    b.add_component("game.camp.v0.TotalSuppliesComponent", 4, [struct.pack("<i", 581)], owners=[PARTY_STATE])
+    recipe = struct.pack("<QQ8x", *text("ALCH_Potion_Healing_RoguesMorsel"))
+    b.add_component("game.party.v1.RecipesComponent", 16, [stored_range(recipe)], owners=[PARTY_STATE])
+    waypoint = struct.pack("<QQ16xQQ", *text("WAYP_SHA_Temple"), *text("SCL_Main_A"))
+    b.add_component("game.party.v0.WaypointsComponent", 16, [stored_range(waypoint)], owners=[PARTY_STATE])
     b.add_component(
         "game.stats.v3.StatsComponent", 36, [struct.pack("<8x6ii", 8, 15, 14, 12, 10, 18, 3)], owners=[PLAYER]
     )
+    # The companion's XP equals the player's, as shared party XP usually does
     b.add_component(
-        "game.experience.v0.ExperienceComponent", 12, [struct.pack("<3i", 34359, 34359, 0)], owners=[PLAYER]
+        "game.experience.v0.ExperienceComponent",
+        12,
+        [struct.pack("<3i", 34359, 34359, 0)] * 2,
+        owners=[PLAYER, COMPANION],
     )
 
     level1 = BARD + bytes(16) + bytes(16) + bytes(48)
@@ -65,6 +130,7 @@ def build_blob() -> bytes:
         (POTION, INVENTORY, 0),
         (BAG, INVENTORY, 1),
         (GEM, BAG_INVENTORY, 0),
+        (NOTE, BAG_INVENTORY, 1),
         (HELM, CHEST_INVENTORY, 0),
     ]
     member_data = b.add_blob(b"".join(MEMBER_DATA.pack(ref_offset(inv), slot) for _, inv, slot in placements))
@@ -92,11 +158,12 @@ def build_save() -> Save:
         members=(SaveInfoMember("Tav", 34359),),
         difficulty="Balanced",
         location="SCL_Main_A",
+        character_names={COMPANION: "Wyll"},
     )
 
 
 def write_save_dir(path: Path) -> Path:
-    """Write the sample save as an extracted save directory (Globals.lsx only)."""
+    """Write the sample save as an extracted save directory: Globals.lsx and a minimal StorySave.bin."""
     items = "".join(
         f'<node id="Creator"><attribute id="Entity" value="{from_larian_bytes(guid(entity))}" /></node>'
         f'<node id="Item"><attribute id="Stats" value="{info.stats_name}" />'
@@ -104,12 +171,24 @@ def write_save_dir(path: Path) -> Path:
         + "</node>"
         for entity, info in ITEMS.items()
     )
+    cache = (
+        f'<node id="Template"><attribute id="MapKey" value="{NOTE_TEMPLATE}" />'
+        '<attribute id="Name" value="S_MOO_NightsongLetter" /></node>'
+    )
+    characters = (
+        f'<node id="Creator"><attribute id="Entity" value="{from_larian_bytes(guid(COMPANION))}" />'
+        f'<attribute id="TemplateID" value="{COMPANION_TEMPLATE}" /></node>'
+    )
     blob = base64.b64encode(build_blob()).decode()
     path.mkdir(parents=True, exist_ok=True)
     (path / "Globals.lsx").write_text(
         f'<save><region id="NewAge"><node id="NewAge"><attribute id="NewAge" value="{blob}" /></node></region>'
+        f'<region id="CacheTemplates"><node id="Templates"><children>{cache}</children></node></region>'
+        f'<region id="Characters"><node id="Characters"><children>{characters}</children></node></region>'
         f'<region id="Items"><node id="Items"><children>{items}</children></node></region></save>'
     )
+    story = b"\x00junk\x00CHARACTERGUID_S_Player_Wyll_" + COMPANION_TEMPLATE.encode() + b"\x00"
+    (path / "StorySave.bin").write_bytes(bytes(c ^ SCRAMBLE_KEY for c in story))
     return path
 
 

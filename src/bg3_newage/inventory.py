@@ -48,7 +48,7 @@ MEMBER_DATA = struct.Struct("<Qh6x")
 class Item:
     slot: int
     slot_name: str
-    stats_name: str
+    name: str
 
 
 @dataclass(frozen=True)
@@ -132,7 +132,9 @@ class Inventories:
 
     def name(self, item: int) -> str:
         info = self.items.get(item)
-        return info.stats_name if info else f"entity {item}"
+        if info is None:
+            return f"entity {item}"
+        return info.template_name or info.stats_name
 
 
 def slot_name(slot: int) -> str:

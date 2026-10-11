@@ -23,7 +23,13 @@ GUID_SIZE = 16
 LEVEL_COMPONENT = "core.v0.Level"
 ENTITY_ID_COMPONENT = "core.v0.EntityId"
 
+EMPTY_RANGE = 0xFFFF_FFFF_FFFF_FFFF  # stored in place of an offset when a range or owner map is empty
+
 U64 = struct.Struct("<Q")
+U32 = struct.Struct("<I")
+I32 = struct.Struct("<i")
+# A [start, end) pair of offsets, the usual shape of a variable-length field
+RANGE = struct.Struct("<QQ")
 # magic, version, hash, block_offset, block_size, name_block_size, component_count, unknown u16, unknown u64
 HEADER = struct.Struct("<4sIQQQIHHQ")
 # Each component table entry; name_offset is relative to block_offset
@@ -110,16 +116,12 @@ class NewAge:
     def read_struct(self, fmt: struct.Struct, offset: int) -> tuple:
         return fmt.unpack(self.read(offset, fmt.size))
 
-    def read_u64(self, offset: int) -> int:
-        return self.read_struct(U64, offset)[0]
-
     def read_owner_maps(self, start: int, end: int) -> dict[int, tuple[int, ...]]:
         maps: dict[int, tuple[int, ...]] = {}
         for offset in range(start, end, OWNER_MAP_ENTRY.size):
             # indices_end is redundant with count * 4
             indices_start, _, component_index, count = self.read_struct(OWNER_MAP_ENTRY, offset)
-            # Empty maps store an all-ones sentinel instead of a real indices offset
-            maps[component_index] = struct.unpack(f"<{count}I", self.read(indices_start, count * 4)) if count else ()
+            maps[component_index] = tuple(i for (i,) in self.read_range(indices_start, indices_start + count * 4, U32))
         return maps
 
     def elements(self, name: str) -> list[tuple[int | None, bytes]]:
@@ -146,6 +148,28 @@ class NewAge:
             result[owner] = raw
         return result
 
+    def single(self, name: str) -> bytes | None:
+        """The one element of a singleton component (camp supplies, days passed), or None if absent."""
+        elements = self.elements(name)
+        if len(elements) > 1:
+            raise LsmfError(f"{name} has {len(elements)} elements; expected a singleton")
+        return elements[0][1] if elements else None
+
+    def read_string(self, offset: int, length: int) -> str:
+        """Strings (spell, recipe, waypoint names) are stored as (pointer, length) views into a shared block."""
+        return self.read(offset, length).decode("utf-8")
+
+    def read_range(self, start: int, end: int, record: struct.Struct) -> list[tuple]:
+        """Unpack each fixed-size record in a [start, end) range; an all-ones start marks an empty range.
+
+        Every record comes back as a tuple, even a single-field one like ``U64``.
+        """
+        if start == EMPTY_RANGE:
+            return []
+        if end < start or (end - start) % record.size:
+            raise LsmfError(f"range {start:#x}..{end:#x} is not a whole number of {record.size}-byte records")
+        return [self.read_struct(record, offset) for offset in range(start, end, record.size)]
+
     def resolve_ref(self, offset: int) -> int | None:
         """Turn an entity reference (an offset into the EntityId table) into an entity index."""
         table = self.components.get(ENTITY_ID_COMPONENT)
@@ -159,3 +183,8 @@ class NewAge:
 def read_u64_field(raw: bytes) -> int:
     """Decode a component element that is a single u64 (a pointer or an entity reference)."""
     return U64.unpack_from(raw)[0]
+
+
+def read_i32_field(raw: bytes | None) -> int | None:
+    """Decode a component element that is a single i32, or None when the component is absent."""
+    return None if raw is None else I32.unpack_from(raw)[0]

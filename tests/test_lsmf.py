@@ -1,7 +1,7 @@
 import pytest
 
 from bg3_newage.guids import from_larian_bytes, swap_tail, to_larian_bytes
-from bg3_newage.lsmf import ENTITY_ID_COMPONENT, LsmfError, NewAge
+from bg3_newage.lsmf import EMPTY_RANGE, ENTITY_ID_COMPONENT, U64, LsmfError, NewAge
 from tests.builder import BlobBuilder
 
 
@@ -79,3 +79,37 @@ def test_empty_owner_map_with_sentinel_offset():
     blob = NewAge(b.build())
     assert blob.components["game.test.v0.Empty"].owners == ()
     assert blob.by_entity("game.test.v0.Empty") == {}
+
+
+def test_read_range_treats_all_ones_start_as_empty():
+    blob = NewAge(BlobBuilder(entity_count=1).build())
+
+    assert blob.read_range(EMPTY_RANGE, EMPTY_RANGE, U64) == []
+
+
+def test_read_range_rejects_partial_records():
+    b = BlobBuilder(entity_count=1)
+    start = b.add_blob(bytes(12))
+    blob = NewAge(b.build())
+
+    with pytest.raises(LsmfError, match="not a whole number"):
+        blob.read_range(start, start + 12, U64)
+
+
+def test_single_rejects_more_than_one_element():
+    b = BlobBuilder(entity_count=2)
+    b.add_component("game.calendar.v0.DaysPassedComponent", 4, [bytes(4), bytes(4)], owners=[0, 1])
+    blob = NewAge(b.build())
+
+    with pytest.raises(LsmfError, match="singleton"):
+        blob.single("game.calendar.v0.DaysPassedComponent")
+    assert blob.single("game.camp.v0.TotalSuppliesComponent") is None
+
+
+def test_read_range_rejects_inverted_range():
+    b = BlobBuilder(entity_count=1)
+    start = b.add_blob(bytes(16))
+    blob = NewAge(b.build())
+
+    with pytest.raises(LsmfError, match="not a whole number"):
+        blob.read_range(start + 16, start, U64)

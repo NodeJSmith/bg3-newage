@@ -1,6 +1,6 @@
 # bg3-newage
 
-Read a Baldur's Gate 3 party's builds (ability scores, level-up choices, feats, equipped gear, and carried items) straight out of a save file.
+Read a Baldur's Gate 3 party straight out of a save file: builds (ability scores, level-up choices, feats), HP, approval, tadpole powers, prepared spells, equipped gear and carried items, for the party and for companions waiting at camp. Also the Traveller's Chest and camp state (days passed, supplies, recipes, waypoints).
 
 Since Patch 4, most character state lives in the ECS "NewAge" blob inside `Globals.lsf`. LSLib can extract the blob but can't interpret it. This project decodes the parts needed for a party report and writes down what's been learned about the format, extending [Norbyte/lslib#127](https://github.com/Norbyte/lslib/issues/127).
 
@@ -42,7 +42,7 @@ You need Python 3.12+ with [uv](https://docs.astral.sh/uv/), and the .NET 8 SDK 
    dotnet $LSL lsf2lsx data/AutoSave_86/Globals.lsf data/AutoSave_86/Globals.lsx
    ```
 
-3. **Extract the game's own `Data/Shared.pak`** the same way. `party` uses it for class and feat names (without it they show as GUID prefixes), and `camp-chest` needs it to recognise the chest.
+3. **Extract the game's own `Data/Shared.pak`** the same way. `party` uses it for class and feat names (without it they show as GUID prefixes), and `camp-chest` needs it to recognise the chest. `spells` and `camp` don't need it.
 
    ```sh
    dotnet $LSL extract "<game>/Data/Shared.pak" data/shared
@@ -54,10 +54,12 @@ You need Python 3.12+ with [uv](https://docs.astral.sh/uv/), and the .NET 8 SDK 
    uv tool install -e .
    bg3-newage party data/AutoSave_86 --game-data data/shared [--json]
    bg3-newage camp-chest data/AutoSave_86 --game-data data/shared [--json]   # Traveller's Chest contents
+   bg3-newage spells data/AutoSave_86 [--json]       # prepared spells, class actions, item spells
+   bg3-newage camp data/AutoSave_86 [--json]         # days passed, supplies, recipes, waypoints
    bg3-newage components data/AutoSave_86 --grep inventory   # explore the blob
    ```
 
-Party members get their names by matching total XP against the save's `SaveInfo.json`, because the blob has no direct link between the two. If two members have the same XP, they're labelled `entity N` instead of being guessed.
+Party members get their names by matching total XP against the save's `SaveInfo.json`, because the blob has no direct link between the two. Anyone that doesn't match (camp companions, or two members with the same XP) is named from the story database in `StorySave.bin` instead: its strings are XOR-scrambled with `0xAD`, and story constants such as `S_Player_Astarion_<guid>` pair a name with the character's root template, which the `Characters` region of `Globals.lsx` links to the entity. Characters with no story name (a custom Tav) are labelled `entity N`.
 
 The repo contains no save or game data. The tests build synthetic blobs instead (`tests/builder.py`). To run them: `uv sync && uv run pytest`.
 
@@ -85,9 +87,21 @@ All offsets are relative to the end of the 48-byte LSMF header (`BASE_OFFSET`).
 | `game.inventory.v0.WieldingComponent` | 8 | entity ref to the character wielding (equipping) the item. The `MemberData` slot is then the equipment slot: 0 helmet, 1 body, 2 cloak, 3/4 melee main/off hand, 5/6 ranged main/off hand, 7 ring, 8 underwear, 9 boots, 10 gloves, 11 amulet, 12 ring 2, 13 wings, 14 horns, 15 overhead, 16 instrument, 17/18 camp clothes |
 | `game.inventory.v1.IsOwnedComponent` | 8 | on an inventory entity: entity ref to its owner |
 | `game.v0.PlayerComponent` | 1 | marks the active party |
+| `game.camp.v1.PresenceComponent` | 1 | marks characters at camp, camp NPCs included |
+| `game.recruit.v0.RecruitedByComponent` | 8 | entity ref to the recruiter; present at camp and recruited = a companion waiting there |
+| `game.avatar.v0.AvatarComponent` | 16 | marks the player's own character (contents unread) |
+| `game.stats.v0.HealthComponent` | 32 | `i32` current HP, `i32` max HP, 24 unknown bytes |
+| `game.approval.v0.Ratings` | 48 | on a companion: `u64 start, end` of entity refs, `u64 start, end` of matching `i32` ratings (the companion's approval of each), then a range of 16-byte GUIDs (unidentified). The report shows the rating of the avatar |
+| `game.spell.v0.SpellBookPrepares` | 80 | `u64 start, end` of 24-byte prepared spells (name string view, 12 unknown bytes), 64 unknown bytes |
+| `game.tadpole_tree.v0.PowerContainerComponent` | 16 | `u64 start, end` of 16-byte power name string views |
+| `game.calendar.v0.DaysPassedComponent`, `game.camp.v0.TotalSuppliesComponent` | 4 | singletons: `i32` |
+| `game.party.v1.RecipesComponent` | 16 | `u64 start, end` of 24-byte recipes: name string view, 8 unknown bytes |
+| `game.party.v0.WaypointsComponent` | 16 | `u64 start, end` of 48-byte waypoints: name string view, GUID, level name string view |
 
-Item stats names (for example `WPN_Longsword_1`) and root templates come from the `Items` region of `Globals.lsx`, whose `Creator`/`Item` nodes pair entity GUIDs with `Stats` and `CurrentTemplate` in matching order.
+**Strings.** Spell, power, recipe, and waypoint names are stored as text, not GUIDs: a string view is a `u64` pointer into a shared string block plus a length (`u32` or `u64`, depending on the record). An empty range stores `0xFFFFFFFFFFFFFFFF` as its start, like an empty owner map.
+
+Item stats names (for example `WPN_Longsword_1`) and current templates come from the `Items` region of `Globals.lsx`, whose `Creator`/`Item` nodes pair entity GUIDs with `Stats` and `CurrentTemplate` in matching order. Story items (letters, keys, quest objects) share generic stats names like `OBJ_Scroll` or `PUZ_Key`, but their `CurrentTemplate` is a save-local template in the `CacheTemplates` region whose `Name` (such as `S_MOO_NightsongLetter`) is shown instead.
 
 **Bags and the camp chest.** A bag works like any other container: its inventory's `IsOwnedComponent` references the bag item, so following owners recursively reaches bag contents. The Traveller's Chest is the item whose `CurrentTemplate` is listed in `Public/Shared*/Lists/CampChestTemplates.lsx`. In the save, its stats name is just `OBJ_ImmutableContainer`.
 
-**Not decoded yet:** spell books (`game.spell.*`), passives, feat sub-choices (such as Elemental Adept's element), health, and the unknown bytes listed above. It's also unconfirmed whether `StatsComponent` scores include bonuses from items.
+**Not decoded yet:** the full spell book (`game.spell.v3.SpellBookComponent`, 72-byte records whose first field points at a spell-name record), passives, feat sub-choices (such as Elemental Adept's element), and the unknown bytes listed above. It's also unconfirmed whether `StatsComponent` scores include bonuses from items.

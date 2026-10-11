@@ -1,4 +1,5 @@
 import json
+import struct
 import sys
 import xml.etree.ElementTree as ET
 from collections import Counter
@@ -10,7 +11,8 @@ from typing import Annotated, NoReturn
 
 from cyclopts import App, Parameter
 
-from bg3_newage.gamedata import load_game_data
+from bg3_newage.camp import read_camp
+from bg3_newage.gamedata import GameData, load_game_data
 from bg3_newage.inventory import Inventories
 from bg3_newage.party import PartyMember, class_summary, read_party
 from bg3_newage.save import load_save
@@ -36,8 +38,56 @@ def party(
         print(json.dumps([asdict(m) for m in members], indent=2))
         return
     print(f"{save.location}  ({save.difficulty})\n")
+    for heading, group in (
+        ("Party", [m for m in members if m.in_party]),
+        ("At camp", [m for m in members if not m.in_party]),
+    ):
+        if group:
+            print(f"--- {heading} ---\n")
+            for member in group:
+                print(format_member(member))
+
+
+@app.command
+def spells(
+    save_dir: Path,
+    *,
+    as_json: Annotated[bool, Parameter(name="--json")] = False,
+) -> None:
+    """List what each party and camp member can cast or use: prepared spells, class actions, item spells.
+
+    Actions every character has (jump, shove, dash, attacks) are left out.
+    """
+    with exit_on_bad_input():
+        # Spell names are stored as text, so no class/feat game data is needed here
+        members = read_party(load_save(save_dir), GameData())
+    if as_json:
+        spell_lists = [{"entity": m.entity, "name": m.name, "spells": m.prepared_spells} for m in members]
+        print(json.dumps(spell_lists, indent=2))
+        return
     for member in members:
-        print(format_member(member))
+        print(f"== {member.name} ({len(member.prepared_spells)})")
+        print(f"   {', '.join(member.prepared_spells)}\n")
+
+
+@app.command
+def camp(
+    save_dir: Path,
+    *,
+    as_json: Annotated[bool, Parameter(name="--json")] = False,
+) -> None:
+    """Show days passed, camp supplies, known alchemy recipes, and unlocked waypoints."""
+    with exit_on_bad_input():
+        state = read_camp(load_save(save_dir).newage)
+    if as_json:
+        print(json.dumps(asdict(state), indent=2))
+        return
+    print(f"Days passed: {or_unknown(state.days_passed)}")
+    print(f"Camp supplies: {or_unknown(state.supplies)}")
+    print(f"Recipes ({len(state.recipes)}): {', '.join(state.recipes)}")
+    print(f"Waypoints ({len(state.waypoints)}):")
+    for waypoint in state.waypoints:
+        print(f"   {waypoint.name}  [{waypoint.level}]")
 
 
 @app.command
@@ -86,7 +136,8 @@ def exit_on_bad_input() -> Iterator[None]:
     """Report unreadable or malformed input as a one-line error instead of a traceback."""
     try:
         yield
-    except (OSError, ValueError, ET.ParseError) as exc:  # LsmfError is a ValueError
+    # LsmfError is a ValueError; struct.error means a component element was shorter than its known layout
+    except (OSError, ValueError, ET.ParseError, struct.error) as exc:
         fail(str(exc))
 
 
@@ -104,8 +155,19 @@ def with_count(name: str, n: int) -> str:
     return name if n == 1 else f"{name} x{n}"
 
 
+def or_unknown(value: int | None) -> str:
+    return "unknown" if value is None else str(value)
+
+
 def format_member(member: PartyMember) -> str:
-    lines = [f"== {member.name}  (XP {member.total_xp})"]
+    details = []
+    if member.total_xp is not None:
+        details.append(f"XP {member.total_xp}")
+    if member.max_hp is not None:
+        details.append(f"HP {member.hp}/{member.max_hp}")
+    if member.approval is not None:
+        details.append(f"approval {member.approval}")
+    lines = [f"== {member.name}  ({', '.join(details)})" if details else f"== {member.name}"]
     if member.abilities:
         scores = "  ".join(f"{k} {v}" for k, v in member.abilities.items())
         lines.append(f"   {scores}  prof +{member.proficiency}")
@@ -116,8 +178,10 @@ def format_member(member: PartyMember) -> str:
             extra = "".join(f"  {label}: {value}" for label, value in choices if value)
             lines.append(f"   L{lu.level} {lu.class_name or '?'}{extra}")
     lines.append(f"   classes: {class_summary(member)}")
+    if member.tadpole_powers:
+        lines.append(f"   tadpole powers: {', '.join(member.tadpole_powers)}")
     for item in member.equipped:
-        lines.append(f"   [{item.slot_name}] {item.stats_name}")
+        lines.append(f"   [{item.slot_name}] {item.name}")
     if member.carried:
         listed = ", ".join(with_count(name, n) for name, n in count_in_order(member.carried))
         lines.append(f"   carrying {len(member.carried)}: {listed}")
