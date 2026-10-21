@@ -62,8 +62,9 @@ class Holdings:
 class Inventories:
     """Item placement for the whole save, indexed by the entity that owns each container."""
 
-    def __init__(self, blob: NewAge, items: dict[int, ItemInfo]) -> None:
+    def __init__(self, blob: NewAge, items: dict[int, ItemInfo], character_names: dict[int, str]) -> None:
         self.items = items
+        self.character_names = character_names
         inventory_owner = {
             inv: blob.resolve_ref(read_u64_field(raw))
             for inv, raw in blob.by_entity("game.inventory.v1.IsOwnedComponent").items()
@@ -89,7 +90,7 @@ class Inventories:
 
     @classmethod
     def from_save(cls, save: Save) -> "Inventories":
-        return cls(save.newage, save.items)
+        return cls(save.newage, save.items, save.character_names)
 
     def holdings(self, character: int) -> Holdings:
         # A wielded item with no MemberComponent has no slot to report, so it's left out
@@ -131,10 +132,11 @@ class Inventories:
         )
 
     def name(self, item: int) -> str:
-        info = self.items.get(item)
-        if info is None:
+        item_info = self.items.get(item)
+        char_name = self.character_names.get(item)
+        if item_info is None and char_name is None:
             return f"entity {item}"
-        return info.template_name or info.stats_name
+        return char_name or item_info.template_name or item_info.stats_name
 
 
 def slot_name(slot: int) -> str:
