@@ -2,7 +2,9 @@
 
 Each ``LevelUpComponentData`` record points at a ``LevelUpComponentSelectors``
 record: one range of selector pointers per kind of choice (``SELECTOR_KINDS``).
-Each selector record holds its own range of picks:
+The layout mirrors the engine's ``LevelUpData``/``LevelUpUpgrades`` structs in
+bg3se (``BG3Extender/GameDefinitions/Progression.h``). Each selector record
+holds its own range of picks:
 
 - abilities and skills: a pointer to an element of an enum table
   (``EAbility``/``ESkill``) whose i64 value is the game's ability or skill ID
@@ -12,8 +14,13 @@ Each selector record holds its own range of picks:
 Point-buy base scores, set at character creation, live in
 ``CharacterCreationStatsComponent`` and are read here too because they are the
 starting point the level-up choices build on.
+
+Picks are reported under the selector's own ID when it has a specific one
+(``FightingStyle``, ``Maneuvers``, ``HighElfCantrip``), else under the kind's label.
+Spell and passive selectors can also swap an earlier pick for a new one.
 """
 
+import re
 import struct
 from collections import Counter
 from collections.abc import Callable
@@ -48,20 +55,32 @@ SKILL_IDS = (
 )
 
 # game.character_creation.v3.LevelUpComponentData: class, subclass, feat GUIDs (null when not chosen),
-# 16 unknown bytes, u64 pointer to a 16-byte ability record (all zero in practice), u64 pointer to the level's
-# LevelUpComponentSelectors (all ones when there is none), an unknown range
+# AccessorySet GUID, u64 pointer to a LevelUpComponentAbilities range of 7 i32 (all zero in practice), u64 pointer
+# to the level's LevelUpComponentSelectors (all ones when there is none), a [start, end) range of granted spells
+# (empty in practice)
 LEVEL_UP_RECORD = struct.Struct("<16s16s16s16xQQ16x")
-# Every selector record starts with: u64 metadata pointer, 16-byte list GUID, [start, end) range of picks
+# Every selector record starts with: u64 info pointer, 16-byte list GUID, [start, end) range of picks
 SELECTOR = struct.Struct("<Q16xQQ")
+# What a selector's info pointer leads to: a pointer to the engine's base Selector (where the pick came from:
+# race, subrace, class, subclass or feat, plus its GUID and level), a u32 index and 4 unknown bytes, then the
+# SelectorId string view, e.g. FightingStyle (empty or a lone space for generic picks)
+SELECTOR_INFO = struct.Struct("<16xQI4x")
+# Spell and passive selectors follow the picks range with a [start, end) range of swaps, each a pair of
+# NAME_SLOT string views: the pick given up, then its replacement. An offered swap the player
+# declined is stored as a pair of empty strings.
+SWAP_SELECTOR = struct.Struct(SELECTOR.format + "QQ")
 # AbilityBonusSelector is a SELECTOR followed by a [start, end) range of i32 amounts, one per pick
 BONUS_SELECTOR = struct.Struct(SELECTOR.format + "QQ")
 # game.character_creation.v1.StringViewAddSlot: name pointer, u32 length, 4 unknown bytes.
 # (Prepared spells in spells.py use the same pointer + u32 length view with different padding.)
 NAME_SLOT = struct.Struct("<QI4x")
+SWAP = struct.Struct("<QI4xQI4x")
 # game.character_creation.v1.CharacterCreationStatsComponent: 72 unknown bytes, then a [start, end) range of i32
 # point-buy increments, indexed by ability ID (index 0 unused). A score is POINT_BUY_FLOOR plus its increment.
 CREATION_STATS = struct.Struct("<72xQQ")
 POINT_BUY_FLOOR = 8
+# Selector IDs that just restate the kind; picks under them keep the kind's label
+GENERIC_SELECTOR_IDS = frozenset({"", "AbilityBonus", "FeatASI"})
 
 
 @dataclass(frozen=True)
@@ -98,12 +117,34 @@ def read_choices(blob: NewAge, selectors_offset: int) -> dict[str, tuple[str, ..
     if selectors_offset == EMPTY_RANGE:
         return {}
     ranges = RANGE.iter_unpack(blob.read(selectors_offset, RANGE.size * len(SELECTOR_KINDS)))
-    choices = {}
-    for (label, read_picks), (start, end) in zip(SELECTOR_KINDS, ranges, strict=True):
-        picks = tuple(pick for (selector,) in blob.read_range(start, end, U64) for pick in read_picks(blob, selector))
-        if picks:
-            choices[label] = picks
-    return choices
+    choices: dict[str, list[str]] = {}
+    for (kind_label, read_picks), (start, end) in zip(SELECTOR_KINDS, ranges, strict=True):
+        for (selector,) in blob.read_range(start, end, U64):
+            label = selector_label(blob, selector, kind_label)
+            if picks := read_picks(blob, selector):
+                choices.setdefault(label, []).extend(picks)
+            if kind_label in SWAPPING_KINDS and (swaps := read_swaps(blob, selector)):
+                choices.setdefault(f"{label} swapped", []).extend(swaps)
+    return {label: tuple(picks) for label, picks in choices.items()}
+
+
+def selector_label(blob: NewAge, selector: int, kind_label: str) -> str:
+    (info,) = blob.read_struct(U64, selector)
+    ptr, length = blob.read_struct(SELECTOR_INFO, info)
+    selector_id = blob.read_string(ptr, length).strip() if length else ""
+    if selector_id in GENERIC_SELECTOR_IDS:
+        return kind_label
+    # FightingStyle -> "fighting style"
+    return re.sub(r"(?<=[a-z])(?=[A-Z])", " ", selector_id).lower()
+
+
+def read_swaps(blob: NewAge, selector: int) -> list[str]:
+    _, _, _, start, end = blob.read_struct(SWAP_SELECTOR, selector)
+    swaps = []
+    for old_ptr, old_len, new_ptr, new_len in blob.read_range(start, end, SWAP):
+        if old_len or new_len:
+            swaps.append(f"{blob.read_string(old_ptr, old_len)} -> {blob.read_string(new_ptr, new_len)}")
+    return swaps
 
 
 def read_names(blob: NewAge, selector: int) -> list[str]:
@@ -159,6 +200,7 @@ SELECTOR_KINDS: tuple[tuple[str, Callable[[NewAge, int], list[str]]], ...] = (
     ("passives", read_names),  # PassiveSelector
     ("equipment", read_names),  # EquipmentSelector
 )
+SWAPPING_KINDS = frozenset({"spells", "passives"})
 
 
 def read_point_buy(blob: NewAge, entity: int) -> dict[str, int]:

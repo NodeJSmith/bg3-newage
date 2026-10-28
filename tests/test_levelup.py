@@ -37,7 +37,8 @@ def test_level_up_choices_by_kind():
     assert level2.choices == {
         "ability increase": ("DEX +2",),
         "expertise": ("Performance",),
-        "passives": ("FightingStyle_TwoWeaponFighting",),
+        "fighting style": ("FightingStyle_TwoWeaponFighting",),
+        "spells swapped": ("Target_ViciousMockery -> Target_Thunderwave",),
     }
 
 

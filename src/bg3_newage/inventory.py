@@ -132,11 +132,12 @@ class Inventories:
         )
 
     def name(self, item: int) -> str:
-        item_info = self.items.get(item)
-        char_name = self.character_names.get(item)
-        if item_info is None and char_name is None:
+        if char_name := self.character_names.get(item):
+            return char_name
+        info = self.items.get(item)
+        if info is None:
             return f"entity {item}"
-        return char_name or item_info.template_name or item_info.stats_name
+        return info.template_name or info.stats_name
 
 
 def slot_name(slot: int) -> str:

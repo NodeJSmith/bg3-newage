@@ -127,9 +127,10 @@ def build_blob() -> bytes:
     dex, cha = abilities, abilities + 8
     performance = b.add_component("game.character_creation.v1.ESkill", 8, [struct.pack("<q", 2)])
 
-    def selector(picks: bytes, extra: bytes = b"") -> int:
-        """A selector record: metadata pointer, list GUID, range of picks, then any kind-specific fields."""
-        return b.add_blob(struct.pack("<Q16x", 0) + stored_range(picks) + extra)
+    def selector(picks: bytes, extra: bytes = b"", selector_id: str = "") -> int:
+        """A selector record: info pointer, list GUID, range of picks, then any kind-specific fields."""
+        info = b.add_blob(bytes(16) + struct.pack("<QI4x", *text(selector_id)))
+        return b.add_blob(struct.pack("<Q16x", info) + stored_range(picks) + extra)
 
     def names(*values: str) -> bytes:
         return b"".join(struct.pack("<QI4x", *text(v)) for v in values)
@@ -143,11 +144,12 @@ def build_blob() -> bytes:
             b"".join(stored_range(struct.pack("<Q", by_kind[k])) if k in by_kind else empty for k in labels)
         )
 
+    no_swaps = struct.pack("<QQ", EMPTY_RANGE, EMPTY_RANGE)
     level1_choices = selectors(
         {
             "racial bonus": selector(struct.pack("<QQ", dex, cha), stored_range(struct.pack("<2i", 2, 1))),
             "skills": selector(struct.pack("<Q", performance)),
-            "spells": selector(names("Target_ViciousMockery")),
+            "spells": selector(names("Target_ViciousMockery"), no_swaps, selector_id=" "),
             "equipment": selector(names("ARM_Instrument_Drum")),
         }
     )
@@ -155,7 +157,9 @@ def build_blob() -> bytes:
         {
             "ability increase": selector(struct.pack("<QQ", dex, dex)),
             "expertise": selector(struct.pack("<Q", performance)),
-            "passives": selector(names("FightingStyle_TwoWeaponFighting")),
+            "passives": selector(names("FightingStyle_TwoWeaponFighting"), no_swaps, selector_id="FightingStyle"),
+            # Swapped Vicious Mockery for Thunderwave; the empty pair is a swap offered and declined
+            "spells": selector(b"", stored_range(names("Target_ViciousMockery", "Target_Thunderwave") + names("", ""))),
         }
     )
 
