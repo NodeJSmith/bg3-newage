@@ -33,7 +33,8 @@ I64 = struct.Struct("<q")
 RANGE = struct.Struct("<QQ")
 # magic, version, hash, block_offset, block_size, name_block_size, component_count, unknown u16, unknown u64
 HEADER = struct.Struct("<4sIQQQIHHQ")
-# Each component table entry; name_offset is relative to block_offset
+# Each component table entry: name_offset (relative to block_offset), u32 name_size, an unknown u32 (often 0, sometimes
+# junk), hash, element_size, version, element_count, data_offset
 TABLE_ENTRY = struct.Struct("<QIIQIIQQ")
 # core.v0.Level's single element: [entities_start, entities_end) and [owner_maps_start, owner_maps_end)
 LEVEL_RECORD = struct.Struct("<QQQQ")
@@ -56,7 +57,7 @@ class Header(NamedTuple):
 class TableEntry(NamedTuple):
     name_offset: int
     name_size: int
-    unk: int
+    unknown: int
     hash: int
     element_size: int
     version: int

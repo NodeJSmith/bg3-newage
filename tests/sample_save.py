@@ -12,7 +12,7 @@ from pathlib import Path
 from bg3_newage.gamedata import GameData
 from bg3_newage.guids import from_larian_bytes
 from bg3_newage.inventory import MEMBER_DATA
-from bg3_newage.levelup import LEVEL_UP_RECORD, SELECTOR_KINDS
+from bg3_newage.levelup import LEVEL_UP_RECORD, SELECTOR_ID_OFFSET, SELECTOR_KINDS
 from bg3_newage.lsmf import EMPTY_RANGE, ENTITY_ID_COMPONENT, GUID_SIZE, NewAge
 from bg3_newage.osiris import SCRAMBLE_KEY
 from bg3_newage.save import ItemInfo, Save, SaveInfoMember
@@ -127,44 +127,53 @@ def build_blob() -> bytes:
     dex, cha = abilities, abilities + 8
     performance = b.add_component("game.character_creation.v1.ESkill", 8, [struct.pack("<q", 2)])
 
+    empty_range = struct.pack("<QQ", EMPTY_RANGE, EMPTY_RANGE)
+
     def selector(picks: bytes, extra: bytes = b"", selector_id: str = "") -> int:
         """A selector record: info pointer, list GUID, range of picks, then any kind-specific fields."""
-        info = b.add_blob(bytes(16) + struct.pack("<QI4x", *text(selector_id)))
+        # The info record: a base-Selector pointer, index and unknown bytes the decoder skips, then the SelectorId
+        info = b.add_blob(bytes(SELECTOR_ID_OFFSET) + struct.pack("<QI4x", *text(selector_id)))
         return b.add_blob(struct.pack("<Q16x", info) + stored_range(picks) + extra)
 
     def names(*values: str) -> bytes:
         return b"".join(struct.pack("<QI4x", *text(v)) for v in values)
 
+    def swap(old: str, new: str) -> bytes:
+        """One swap record: the pick given up, then its replacement; ("", "") is a swap offered and declined."""
+        return names(old, new)
+
     def selectors(by_kind: dict[str, int]) -> int:
         """LevelUpComponentSelectors: one range of selector pointers per kind, in SELECTOR_KINDS order."""
-        empty = struct.pack("<QQ", EMPTY_RANGE, EMPTY_RANGE)
-        labels = [label for label, _ in SELECTOR_KINDS]
+        labels = [label for label, _, _ in SELECTOR_KINDS]
         assert set(by_kind) <= set(labels)
         return b.add_blob(
-            b"".join(stored_range(struct.pack("<Q", by_kind[k])) if k in by_kind else empty for k in labels)
+            b"".join(stored_range(struct.pack("<Q", by_kind[k])) if k in by_kind else empty_range for k in labels)
         )
 
-    no_swaps = struct.pack("<QQ", EMPTY_RANGE, EMPTY_RANGE)
     level1_choices = selectors(
         {
-            "racial bonus": selector(struct.pack("<QQ", dex, cha), stored_range(struct.pack("<2i", 2, 1))),
+            "racial bonus": selector(
+                struct.pack("<QQ", dex, cha), stored_range(struct.pack("<2i", 2, 1)), selector_id="AbilityBonus"
+            ),
             "skills": selector(struct.pack("<Q", performance)),
-            "spells": selector(names("Target_ViciousMockery"), no_swaps, selector_id=" "),
-            "equipment": selector(names("ARM_Instrument_Drum")),
+            # Real saves store some generic selector IDs as a lone space
+            "spells": selector(names("Target_ViciousMockery"), empty_range, selector_id=" "),
+            "equipment": selector(names("ARM_Instrument_Drum"), selector_id="BardInstrument"),
         }
     )
     level2_choices = selectors(
         {
-            "ability increase": selector(struct.pack("<QQ", dex, dex)),
+            "ability increase": selector(struct.pack("<QQ", dex, dex), selector_id="FeatASI"),
             "expertise": selector(struct.pack("<Q", performance)),
-            "passives": selector(names("FightingStyle_TwoWeaponFighting"), no_swaps, selector_id="FightingStyle"),
+            "passives": selector(names("FightingStyle_TwoWeaponFighting"), empty_range, selector_id="FightingStyle"),
             # Swapped Vicious Mockery for Thunderwave; the empty pair is a swap offered and declined
-            "spells": selector(b"", stored_range(names("Target_ViciousMockery", "Target_Thunderwave") + names("", ""))),
+            "spells": selector(b"", stored_range(swap("Target_ViciousMockery", "Target_Thunderwave") + swap("", ""))),
         }
     )
 
     def level_up(class_guid: bytes, subclass: bytes, feat: bytes, choices: int) -> bytes:
-        return LEVEL_UP_RECORD.pack(class_guid, subclass, feat, 0, choices)
+        abilities = 0  # LevelUpComponentAbilities pointer, unread
+        return LEVEL_UP_RECORD.pack(class_guid, subclass, feat, abilities, choices)
 
     level1 = level_up(BARD, bytes(16), bytes(16), level1_choices)
     level2 = level_up(BARD, SWORDS, DUAL_WIELDER, level2_choices)

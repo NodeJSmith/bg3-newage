@@ -3,8 +3,8 @@ import struct
 import pytest
 
 from bg3_newage.levelup import (
-    BONUS_SELECTOR,
     SELECTOR,
+    SELECTOR_WITH_RANGE,
     LevelUp,
     read_ability_points,
     read_choices,
@@ -30,7 +30,7 @@ def test_level_up_choices_by_kind():
             "racial bonus": ("DEX +2", "CHA +1"),
             "skills": ("Performance",),
             "spells": ("Target_ViciousMockery",),
-            "equipment": ("ARM_Instrument_Drum",),
+            "bard instrument": ("ARM_Instrument_Drum",),
         },
     )
     # Two ASI points spent on the same ability add up
@@ -82,7 +82,7 @@ def test_racial_bonus_with_missing_amounts_is_an_error():
     b = BlobBuilder(entity_count=1)
     table = b.add_component("game.character_creation.v1.EAbility", 8, [struct.pack("<q", 2)])
     slots = b.add_blob(struct.pack("<Q", table))
-    selector = b.add_blob(BONUS_SELECTOR.pack(0, slots, slots + 8, EMPTY_RANGE, EMPTY_RANGE))
+    selector = b.add_blob(SELECTOR_WITH_RANGE.pack(0, slots, slots + 8, EMPTY_RANGE, EMPTY_RANGE))
     blob = NewAge(b.build())
 
     with pytest.raises(ValueError, match="1 picks but 0 amounts"):

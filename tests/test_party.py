@@ -87,7 +87,7 @@ def test_format_member_text():
         "   STR 8  DEX 15  CON 14  INT 12  WIS 10  CHA 18  prof +3\n"
         "   point buy: STR 8  DEX 15  CON 8  INT 8  WIS 8  CHA 15\n"
         "   L1 Bard  racial bonus: DEX +2, CHA +1  skills: Performance  spells: Target_ViciousMockery"
-        "  equipment: ARM_Instrument_Drum\n"
+        "  bard instrument: ARM_Instrument_Drum\n"
         "   L2 Bard  subclass: SwordsCollege  feat: DualWielder  ability increase: DEX +2"
         "  expertise: Performance  spells swapped: Target_ViciousMockery -> Target_Thunderwave"
         "  fighting style: FightingStyle_TwoWeaponFighting\n"

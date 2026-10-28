@@ -95,7 +95,8 @@ class BlobBuilder:
             table += TABLE_ENTRY.pack(
                 len(names),
                 len(encoded),
-                0,
+                # Junk in the u32 after name_size, as real saves can have; reading name_size as a u64 would break
+                0x7F59,
                 UNKNOWN_HASH,
                 spec.element_size,
                 COMPONENT_VERSION,

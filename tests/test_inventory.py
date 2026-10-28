@@ -13,6 +13,7 @@ from tests.sample_save import (
     GAME,
     NO_GAME_DATA,
     PLAYER,
+    SWORD,
     build_save,
     write_game_data_dir,
     write_save_dir,
@@ -29,6 +30,13 @@ def test_carried_items_list_bag_contents_right_after_the_bag():
     holdings = Inventories.from_save(build_save()).holdings(PLAYER)
 
     assert holdings.carried == ("OBJ_Potion_Healing", "OBJ_Bag_AlchemyPouch", "OBJ_Agate", "S_MOO_NightsongLetter")
+
+
+def test_character_entities_are_named_from_the_story():
+    # A character stored in a container (a corpse in the camp chest) shows its story name, ahead of any item info
+    save = replace(build_save(), character_names={SWORD: "Lae'zel"})
+
+    assert Inventories.from_save(save).name(SWORD) == "Lae'zel"
 
 
 def test_camp_chest_found_by_template():
