@@ -95,6 +95,7 @@ class BlobBuilder:
             table += TABLE_ENTRY.pack(
                 len(names),
                 len(encoded),
+                0,
                 UNKNOWN_HASH,
                 spec.element_size,
                 COMPONENT_VERSION,
