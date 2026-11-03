@@ -29,6 +29,9 @@ U64 = struct.Struct("<Q")
 U32 = struct.Struct("<I")
 I32 = struct.Struct("<i")
 I64 = struct.Struct("<q")
+# A string view: pointer, u32 length, 4 padding bytes. The padding is uninitialized memory in real saves, so it must
+# never be read as part of the length.
+STRING_VIEW = struct.Struct("<QI4x")
 # A [start, end) pair of offsets, the usual shape of a variable-length field
 RANGE = struct.Struct("<QQ")
 # magic, version, hash, block_offset, block_size, name_block_size, component_count, unknown u16, unknown u64

@@ -6,7 +6,7 @@ no game data is needed to read them.
 
 import struct
 
-from bg3_newage.lsmf import RANGE, NewAge
+from bg3_newage.lsmf import RANGE, STRING_VIEW, NewAge
 
 # Every character has these actions; listing them adds nothing
 BASIC_ACTIONS = frozenset(
@@ -30,9 +30,7 @@ BASIC_ACTIONS = frozenset(
 PREPARED_RANGE = struct.Struct("<QQ64x")
 # One prepared spell: name string view (pointer, u32 length), 12 unknown bytes
 PREPARED_SPELL = struct.Struct("<QI12x")
-# game.tadpole_tree.v0.PowerContainerComponent is a [start, end) range of name string views: pointer, u64 length.
-# Same layout as RANGE, different meaning. (Prepared spells above store a u32 length instead.)
-STRING_VIEW = RANGE
+# game.tadpole_tree.v0.PowerContainerComponent is a [start, end) range of name string views (STRING_VIEW)
 
 
 def prepared_spells(blob: NewAge, entity: int) -> tuple[str, ...]:

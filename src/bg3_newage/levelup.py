@@ -28,7 +28,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from bg3_newage.gamedata import GameData
-from bg3_newage.lsmf import EMPTY_RANGE, I32, I64, RANGE, U64, NewAge
+from bg3_newage.lsmf import EMPTY_RANGE, I32, I64, RANGE, STRING_VIEW, U64, NewAge
 
 # Game ability IDs, in the order the game lists them; 0 means "none"
 ABILITY_IDS = {1: "STR", 2: "DEX", 3: "CON", 4: "INT", 5: "WIS", 6: "CHA"}
@@ -65,16 +65,13 @@ SELECTOR = struct.Struct("<Q16xQQ")
 # A SELECTOR followed by one more [start, end) range: i32 amounts for AbilityBonusSelector (one per pick);
 # swaps for SpellSelector and PassiveSelector (see SWAP_PAIR)
 SELECTOR_WITH_RANGE = struct.Struct(SELECTOR.format + "QQ")
-# game.character_creation.v1.StringViewAddSlot: name pointer, u32 length, 4 unknown bytes.
-# (Prepared spells in spells.py use the same pointer + u32 length view with different padding.)
-NAME_SLOT = struct.Struct("<QI4x")
 # The record a selector's info pointer leads to is 16 bytes (a pointer to the engine's base Selector, which says
 # whether the pick came from race, subrace, class, subclass or feat; a u32 index; 4 unknown bytes), then a
-# NAME_SLOT holding the SelectorId, e.g. FightingStyle (empty or a lone space for generic picks)
+# STRING_VIEW holding the SelectorId, e.g. FightingStyle (empty or a lone space for generic picks)
 SELECTOR_ID_OFFSET = 16
-# One swap: a NAME_SLOT for the pick given up, then one for its replacement. A swap the player was offered
+# One swap: a STRING_VIEW for the pick given up, then one for its replacement. A swap the player was offered
 # and declined is a pair of empty strings.
-SWAP_PAIR = struct.Struct("<" + NAME_SLOT.format[1:] * 2)
+SWAP_PAIR = struct.Struct("<" + STRING_VIEW.format[1:] * 2)
 # game.character_creation.v1.CharacterCreationStatsComponent: 72 unknown bytes, then a [start, end) range of i32
 # point-buy increments, indexed by ability ID (index 0 unused). A score is POINT_BUY_FLOOR plus its increment.
 CREATION_STATS = struct.Struct("<72xQQ")
@@ -131,7 +128,7 @@ def read_choices(blob: NewAge, selectors_offset: int) -> dict[str, tuple[str, ..
 
 def selector_label(blob: NewAge, selector: int, kind_label: str) -> str:
     (info,) = blob.read_struct(U64, selector)
-    ptr, length = blob.read_struct(NAME_SLOT, info + SELECTOR_ID_OFFSET)
+    ptr, length = blob.read_struct(STRING_VIEW, info + SELECTOR_ID_OFFSET)
     selector_id = blob.read_string(ptr, length).strip() if length else ""
     if selector_id in GENERIC_SELECTOR_IDS:
         return kind_label
@@ -150,7 +147,7 @@ def read_swaps(blob: NewAge, selector: int) -> list[str]:
 
 def read_names(blob: NewAge, selector: int) -> list[str]:
     _, start, end = blob.read_struct(SELECTOR, selector)
-    return [blob.read_string(ptr, length) for ptr, length in blob.read_range(start, end, NAME_SLOT)]
+    return [blob.read_string(ptr, length) for ptr, length in blob.read_range(start, end, STRING_VIEW)]
 
 
 def read_enum_values(blob: NewAge, start: int, end: int) -> list[int]:

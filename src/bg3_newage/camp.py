@@ -6,12 +6,12 @@ These live on singleton entities rather than on characters.
 import struct
 from dataclasses import dataclass
 
-from bg3_newage.lsmf import RANGE, NewAge, read_i32_field
+from bg3_newage.lsmf import RANGE, STRING_VIEW, NewAge, read_i32_field
 
-# game.party.v0.RecipeData: name string view (pointer, u64 length), 8 unknown bytes
-RECIPE = struct.Struct("<QQ8x")
+# game.party.v0.RecipeData: name string view, 8 unknown bytes
+RECIPE = struct.Struct(STRING_VIEW.format + "8x")
 # game.party.v0.WaypointsComponent points at 48-byte entries: name string view, 16-byte GUID, level name string view
-WAYPOINT = struct.Struct("<QQ16xQQ")
+WAYPOINT = struct.Struct(STRING_VIEW.format + "16x" + STRING_VIEW.format[1:])
 WAYPOINT_PREFIX = "WAYP_"
 
 

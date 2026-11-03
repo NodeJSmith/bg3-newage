@@ -109,7 +109,7 @@ All offsets are relative to the end of the 48-byte LSMF header (`BASE_OFFSET`).
 | `game.party.v1.RecipesComponent` | 16 | `u64 start, end` of 24-byte recipes: name string view, 8 unknown bytes |
 | `game.party.v0.WaypointsComponent` | 16 | `u64 start, end` of 48-byte waypoints: name string view, GUID, level name string view |
 
-**Strings.** Spell, power, recipe, and waypoint names are stored as text, not GUIDs: a string view is a `u64` pointer into a shared string block plus a length (`u32` or `u64`, depending on the record). An empty range stores `0xFFFFFFFFFFFFFFFF` as its start, like an empty owner map.
+**Strings.** Spell, power, recipe, and waypoint names are stored as text, not GUIDs: a string view is 16 bytes: a `u64` pointer into a shared string block, a `u32` length, and 4 bytes of padding. The padding is uninitialized memory (it can hold anything from 0 to junk like `1610613892`), so reading the length as a `u64` works only on saves where the padding happens to be zero. An empty range stores `0xFFFFFFFFFFFFFFFF` as its start, like an empty owner map.
 
 Item stats names (for example `WPN_Longsword_1`) and current templates come from the `Items` region of `Globals.lsx`, whose `Creator`/`Item` nodes pair entity GUIDs with `Stats` and `CurrentTemplate` in matching order. Story items (letters, keys, quest objects) share generic stats names like `OBJ_Scroll` or `PUZ_Key`, but their `CurrentTemplate` is a save-local template in the `CacheTemplates` region whose `Name` (such as `S_MOO_NightsongLetter`) is shown instead.
 
