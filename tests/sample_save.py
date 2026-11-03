@@ -38,6 +38,8 @@ BARD, SWORDS, DUAL_WIELDER = guid(100), guid(101), guid(102)
 CHEST_TEMPLATE = "96eab9d1-74b1-42f7-b1ad-061a9fcea8c4"
 NOTE_TEMPLATE = "06332bc8-19b5-4f9c-9013-6d433abd78a0"
 COMPANION_TEMPLATE = "c774d764-4a17-48dc-b470-32ace9ce447d"
+# Junk the fixture writes into string-view padding, which real saves leave uninitialized
+VIEW_PADDING_JUNK = 0x0000_0003
 
 GAME = GameData(
     classes={from_larian_bytes(BARD): "Bard", from_larian_bytes(SWORDS): "SwordsCollege"},
@@ -71,6 +73,13 @@ def build_blob() -> bytes:
         """Store a string and return its (pointer, length) view."""
         return b.add_blob(value.encode()), len(value)
 
+    def view(value: str) -> bytes:
+        """Store a string and return its 16-byte string view: pointer, u32 length, 4 padding bytes.
+
+        Real saves leave uninitialized memory in the padding, so the fixture fills it with junk too.
+        """
+        return struct.pack("<QII", *text(value), VIEW_PADDING_JUNK)
+
     def stored_range(data: bytes) -> bytes:
         """Store records and return the [start, end) range pointing at them."""
         start = b.add_blob(data)
@@ -94,16 +103,16 @@ def build_blob() -> bytes:
     b.add_component(
         "game.tadpole_tree.v0.PowerContainerComponent",
         16,
-        [stored_range(struct.pack("<QQ", *text("TAD_Charm")))],
+        [stored_range(view("TAD_Charm"))],
         owners=[PLAYER],
     )
     prepared = b"".join(struct.pack("<QI12x", *text(name)) for name in ("Shout_Dash", "Target_ViciousMockery"))
     b.add_component("game.spell.v0.SpellBookPrepares", 80, [stored_range(prepared) + bytes(64)], owners=[PLAYER])
     b.add_component("game.calendar.v0.DaysPassedComponent", 4, [struct.pack("<i", 43)], owners=[PARTY_STATE])
     b.add_component("game.camp.v0.TotalSuppliesComponent", 4, [struct.pack("<i", 581)], owners=[PARTY_STATE])
-    recipe = struct.pack("<QQ8x", *text("ALCH_Potion_Healing_RoguesMorsel"))
+    recipe = view("ALCH_Potion_Healing_RoguesMorsel") + bytes(8)
     b.add_component("game.party.v1.RecipesComponent", 16, [stored_range(recipe)], owners=[PARTY_STATE])
-    waypoint = struct.pack("<QQ16xQQ", *text("WAYP_SHA_Temple"), *text("SCL_Main_A"))
+    waypoint = view("WAYP_SHA_Temple") + bytes(16) + view("SCL_Main_A")
     b.add_component("game.party.v0.WaypointsComponent", 16, [stored_range(waypoint)], owners=[PARTY_STATE])
     b.add_component(
         "game.stats.v3.StatsComponent", 36, [struct.pack("<8x6ii", 8, 15, 14, 12, 10, 18, 3)], owners=[PLAYER]
@@ -132,11 +141,11 @@ def build_blob() -> bytes:
     def selector(picks: bytes, extra: bytes = b"", selector_id: str = "") -> int:
         """A selector record: info pointer, list GUID, range of picks, then any kind-specific fields."""
         # The info record: a base-Selector pointer, index and unknown bytes the decoder skips, then the SelectorId
-        info = b.add_blob(bytes(SELECTOR_ID_OFFSET) + struct.pack("<QI4x", *text(selector_id)))
+        info = b.add_blob(bytes(SELECTOR_ID_OFFSET) + view(selector_id))
         return b.add_blob(struct.pack("<Q16x", info) + stored_range(picks) + extra)
 
     def names(*values: str) -> bytes:
-        return b"".join(struct.pack("<QI4x", *text(v)) for v in values)
+        return b"".join(view(v) for v in values)
 
     def swap(old: str, new: str) -> bytes:
         """One swap record: the pick given up, then its replacement; ("", "") is a swap offered and declined."""
